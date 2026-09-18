@@ -39,8 +39,11 @@ def notebook_path() -> Path:
     return path
 
 
-def load_application_source(path: Path) -> str:
+def load_application_source(path: Path | str) -> str:
     """Read the notebook and return its code after neutralizing embedded mainloop."""
+    # GitHub Actions/PyInstaller may pass this as a plain Windows string.
+    # Normalize it immediately so pathlib methods such as .open() always work.
+    path = Path(path)
     with path.open("r", encoding="utf-8") as fh:
         book = json.load(fh)
 
