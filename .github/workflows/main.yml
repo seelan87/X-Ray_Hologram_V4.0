@@ -96,6 +96,11 @@ jobs:
             --hidden-import imageio `
             --hidden-import imageio.v2 `
             --hidden-import imageio_ffmpeg `
+            --hidden-import tkinter.ttk `
+            --hidden-import tkinter.filedialog `
+            --hidden-import tkinter.messagebox `
+            --hidden-import tkinter.font `
+            --hidden-import tkinter.constants `
             --hidden-import matplotlib.backends.backend_tkagg `
             --hidden-import PIL._tkinter_finder `
             "X-Ray_Hologram_V4.0_launcher.py"
