@@ -1,0 +1,11 @@
+# Windows x64 runtime dependencies for X-Ray Hologram V4.0
+# Tkinter is bundled with the official Windows Python distribution.
+h5py>=3.11,<4
+numpy>=2.0,<3
+scipy>=1.13,<2
+pandas>=2.2,<3
+matplotlib>=3.8,<4
+scikit-image>=0.24,<1
+Pillow>=10,<13
+imageio>=2.34,<3
+imageio-ffmpeg>=0.5,<1
