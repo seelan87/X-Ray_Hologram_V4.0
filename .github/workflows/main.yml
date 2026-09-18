@@ -1,0 +1,196 @@
+name: Build Windows x64 ONEDIR - X-Ray Hologram V4.0
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12 x64
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: "x64"
+          cache: pip
+          cache-dependency-path: requirements-windows.txt
+
+      - name: Install dependencies
+        shell: powershell
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -r requirements-windows.txt
+          python -m pip install --upgrade "pyinstaller>=6.11,<7"
+
+      - name: Verify source files
+        shell: powershell
+        run: |
+          if (!(Test-Path -LiteralPath "X-Ray_Hologram_V4.0 simplified.ipynb")) {
+            throw "Required notebook is missing: X-Ray_Hologram_V4.0 simplified.ipynb"
+          }
+
+          if (!(Test-Path -LiteralPath "X-Ray_Hologram_V4.0_launcher.py")) {
+            throw "Launcher is missing: X-Ray_Hologram_V4.0_launcher.py"
+          }
+
+          if (!(Test-Path -LiteralPath "hooks/pyi_rth_imageio_ffmpeg.py")) {
+            throw "Runtime hook is missing: hooks/pyi_rth_imageio_ffmpeg.py"
+          }
+
+          python -m py_compile X-Ray_Hologram_V4.0_launcher.py
+          python -m py_compile hooks/pyi_rth_imageio_ffmpeg.py
+
+          python -c "import json; b=json.load(open(r'X-Ray_Hologram_V4.0 simplified.ipynb',encoding='utf-8')); print('Notebook cells:',len(b.get('cells',[]))); assert len(b.get('cells',[])) >= 1"
+
+      - name: Verify scientific packages / ImageIO / FFmpeg
+        shell: powershell
+        run: |
+          python -c "import h5py, numpy, scipy, pandas, matplotlib, skimage, imageio, imageio.v2, imageio_ffmpeg; print('h5py:', h5py.__version__); print('numpy:', numpy.__version__); print('scipy:', scipy.__version__); print('pandas:', pandas.__version__); print('matplotlib:', matplotlib.__version__); print('skimage:', skimage.__version__); print('imageio:', imageio.__version__); print('imageio-ffmpeg:', imageio_ffmpeg.__file__); print('ffmpeg:', imageio_ffmpeg.get_ffmpeg_exe())"
+
+      - name: Verify launcher transformation logic
+        shell: powershell
+        run: |
+          $bookPath = Join-Path (Get-Location) "X-Ray_Hologram_V4.0 simplified.ipynb"
+          $code = @"
+          import importlib.util
+          s = importlib.util.spec_from_file_location("launcher", "X-Ray_Hologram_V4.0_launcher.py")
+          m = importlib.util.module_from_spec(s)
+          s.loader.exec_module(m)
+          src = m.load_application_source(r"$bookPath")
+          assert "PACKAGED-LAUNCHER: embedded mainloop suppressed" in src
+          assert "root.mainloop()" not in src
+          print("Launcher transformation check: PASS")
+          "@
+          $code | python
+
+      - name: Build ONEDIR EXE
+        shell: powershell
+        run: |
+          Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
+
+          python -m PyInstaller `
+            --clean `
+            --noconfirm `
+            --onedir `
+            --windowed `
+            --name "X-Ray_Hologram_V4.0" `
+            --runtime-hook "hooks/pyi_rth_imageio_ffmpeg.py" `
+            --collect-all h5py `
+            --collect-all numpy `
+            --collect-all scipy `
+            --collect-all pandas `
+            --collect-all matplotlib `
+            --collect-all skimage `
+            --collect-all imageio `
+            --collect-all imageio_ffmpeg `
+            --collect-all PIL `
+            --hidden-import h5py `
+            --hidden-import imageio `
+            --hidden-import imageio.v2 `
+            --hidden-import imageio_ffmpeg `
+            --hidden-import matplotlib.backends.backend_tkagg `
+            --hidden-import PIL._tkinter_finder `
+            "X-Ray_Hologram_V4.0_launcher.py"
+
+      - name: Copy source notebook beside EXE
+        shell: powershell
+        run: |
+          $found = Get-ChildItem -LiteralPath "dist" -Recurse -File -Filter "X-Ray_Hologram_V4.0.exe" -ErrorAction SilentlyContinue |
+                   Select-Object -First 1
+
+          if (!$found) {
+            Write-Host "===== DIST TREE ====="
+            if (Test-Path -LiteralPath "dist") {
+              Get-ChildItem -LiteralPath "dist" -Recurse | Select-Object FullName, Length
+            }
+            throw "X-Ray_Hologram_V4.0.exe was not produced."
+          }
+
+          $appDir = $found.Directory.FullName
+          $sourceBook = Join-Path (Get-Location) "X-Ray_Hologram_V4.0 simplified.ipynb"
+          $targetBook = Join-Path $appDir "X-Ray_Hologram_V4.0 simplified.ipynb"
+
+          if (!(Test-Path -LiteralPath $sourceBook)) {
+            throw "Repository notebook not found: $sourceBook"
+          }
+
+          Copy-Item -LiteralPath $sourceBook -Destination $targetBook -Force
+          "APP_DIR=$appDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+          Write-Host "EXE: $($found.FullName)"
+          Write-Host "NOTEBOOK: $targetBook"
+
+      - name: Verify EXE and notebook
+        shell: powershell
+        run: |
+          $appDir = $env:APP_DIR
+          $exe = Join-Path $appDir "X-Ray_Hologram_V4.0.exe"
+          $book = Join-Path $appDir "X-Ray_Hologram_V4.0 simplified.ipynb"
+
+          if (!(Test-Path -LiteralPath $exe)) {
+            throw "EXE was not found: $exe"
+          }
+
+          if (!(Test-Path -LiteralPath $book)) {
+            throw "Notebook beside EXE was not found: $book"
+          }
+
+          $srcHash = (Get-FileHash -LiteralPath "X-Ray_Hologram_V4.0 simplified.ipynb" -Algorithm SHA256).Hash
+          $dstHash = (Get-FileHash -LiteralPath $book -Algorithm SHA256).Hash
+
+          if ($srcHash -ne $dstHash) {
+            throw "Copied notebook hash does not match repository notebook."
+          }
+
+          Write-Host "Notebook SHA256 verified: $dstHash"
+
+      - name: Verify FFmpeg bundle
+        shell: powershell
+        run: |
+          $appDir = $env:APP_DIR
+          $ffmpeg = Get-ChildItem -LiteralPath $appDir -Recurse -File -Filter "ffmpeg*.exe" -ErrorAction SilentlyContinue
+
+          if (!$ffmpeg) {
+            throw "FFmpeg executable was not found in the ONEDIR application."
+          }
+
+          $ffmpeg | Select-Object FullName, Length
+
+      - name: Show build diagnostics
+        if: always()
+        shell: powershell
+        run: |
+          Write-Host "===== DIST TREE ====="
+          if (Test-Path -LiteralPath "dist") {
+            Get-ChildItem -LiteralPath "dist" -Recurse | Select-Object FullName, Length
+          }
+
+          Write-Host "===== PYINSTALLER WARNINGS ====="
+          Get-ChildItem -LiteralPath "build" -Filter "warn-*.txt" -Recurse -ErrorAction SilentlyContinue |
+            ForEach-Object {
+              Write-Host "--- $($_.FullName) ---"
+              Get-Content $_.FullName
+            }
+
+      - name: Package ONEDIR application
+        shell: powershell
+        run: |
+          $appDir = $env:APP_DIR
+          Compress-Archive `
+            -Path (Join-Path $appDir "*") `
+            -DestinationPath "X-Ray_Hologram_V4.0-Windows-x64-ONEDIR.zip" `
+            -Force
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: X-Ray_Hologram_V4.0-Windows-x64-ONEDIR
+          path: X-Ray_Hologram_V4.0-Windows-x64-ONEDIR.zip
+          if-no-files-found: error
