@@ -63,6 +63,7 @@ jobs:
           s = importlib.util.spec_from_file_location("launcher", "X-Ray_Hologram_V4.0_launcher.py")
           m = importlib.util.module_from_spec(s)
           s.loader.exec_module(m)
+          # Intentionally pass a plain string: the launcher must normalize it to pathlib.Path.
           src = m.load_application_source(r"$bookPath")
           assert "PACKAGED-LAUNCHER: embedded mainloop suppressed" in src
           assert "root.mainloop()" not in src
